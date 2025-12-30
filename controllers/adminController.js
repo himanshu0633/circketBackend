@@ -1,5 +1,8 @@
+const mongoose = require("mongoose");
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
+const TeamMember = require("../models/TeamMember");
+const Team = require("../models/Team");
 const { sendWelcomeEmail } = require("../utils/emailConfig");
 
 exports.createTeamCaptain = async (req, res) => {
@@ -116,7 +119,6 @@ exports.createTeamCaptain = async (req, res) => {
     });
   }
 };
-
 exports.updatePaymentStatus = async (req, res) => {
   try {
     const { status } = req.body;
@@ -194,7 +196,6 @@ exports.updatePaymentStatus = async (req, res) => {
     });
   }
 };
-
 exports.getMyTeamCaptains = async (req, res) => {
   try {
     const captains = await User.find({
@@ -223,7 +224,86 @@ exports.getMyTeamCaptains = async (req, res) => {
     });
   }
 };
+exports.getMyTeam = async (req, res) => {
+  try {
+    // Current logged-in user की ID (req.user.id middleware से आएगी)
+    const currentUserId = req.user.id;
+    
+    // पहले current user को TeamMember में ढूंढ़ें
+    const currentTeamMember = await TeamMember.findOne({
+      $or: [
+        { _id: currentUserId },
+        { email: req.user.email } // अगर user email से login है तो
+      ]
+    });
 
+    if (!currentTeamMember) {
+      return res.status(404).json({
+        success: false,
+        message: "Team member not found"
+      });
+    }
+
+    // Current user की teamId से टीम ढूंढ़ें
+    const team = await mongoose.model("Team").findById(currentTeamMember.teamId)
+      .populate('captainId', 'name email phoneNo')
+      .select('-__v');
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        message: "Team not found"
+      });
+    }
+
+    // उस टीम के सभी members ढूंढ़ें
+    const teamMembers = await TeamMember.find({ teamId: currentTeamMember.teamId })
+      .select('-__v')
+      .sort({ createdAt: 1 });
+
+    // Format response
+    const response = {
+      success: true,
+      team: {
+        _id: team._id,
+        teamName: team.teamName,
+        sportType: team.sportType || "General",
+        totalPlayers: teamMembers.length,
+        captain: team.captainId ? {
+          id: team.captainId._id,
+          name: team.captainId.name,
+          email: team.captainId.email,
+          phoneNo: team.captainId.phoneNo
+        } : null,
+        status: team.status,
+        createdAt: team.createdAt,
+        updatedAt: team.updatedAt
+      },
+      members: teamMembers.map(member => ({
+        _id: member._id,
+        name: member.name,
+        mobile: member.mobile,
+        email: member.email,
+        role: member.role,
+        isCurrentUser: member._id.toString() === currentUserId.toString(),
+        createdAt: member.createdAt
+      })),
+      currentUserRole: currentTeamMember.role,
+      totalMembers: teamMembers.length
+    };
+
+    res.json(response);
+
+  } catch (err) {
+    console.error("❌ Get my team error:", err);
+    
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch team details",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+};
 exports.deleteCaptain = async (req, res) => {
   try {
     const { id } = req.params;
@@ -264,7 +344,6 @@ exports.deleteCaptain = async (req, res) => {
     });
   }
 };
-
 exports.resendWelcomeEmail = async (req, res) => {
   try {
     const { id } = req.params;
@@ -312,7 +391,6 @@ exports.resendWelcomeEmail = async (req, res) => {
     });
   }
 };
-
 exports.getCaptainStats = async (req, res) => {
   try {
     const captains = await User.find({
@@ -354,6 +432,111 @@ exports.getCaptainStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch statistics"
+    });
+  }
+};
+exports.getCaptainTeamByAdmin = async (req, res) => {
+  try {
+    const { captainId } = req.params;
+
+    // 1. Validate admin role (middleware se aaya hoga, phir bhi check)
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Only admin can access this endpoint"
+      });
+    }
+
+    // 2. Captain exists and was created by this admin
+    const captain = await User.findOne({
+      _id: captainId,
+      role: "teamCaptain",
+      createdByAdmin: req.user.id
+    });
+
+    if (!captain) {
+      return res.status(404).json({
+        success: false,
+        message: "Captain not found or you don't have permission"
+      });
+    }
+
+    // 3. Get captain's team
+    const team = await Team.findOne({ captainId: captainId })
+      .populate('captainId', 'name email phoneNo paymentStatus')
+      .select('-__v');
+
+    if (!team) {
+      return res.json({
+        success: true,
+        message: "Captain hasn't created a team yet",
+        captain: {
+          id: captain._id,
+          name: captain.name,
+          email: captain.email,
+          phoneNo: captain.phoneNo,
+          paymentStatus: captain.paymentStatus
+        },
+        team: null,
+        members: []
+      });
+    }
+
+    // 4. Get team members
+    const teamMembers = await TeamMember.find({ teamId: team._id })
+      .select('-__v')
+      .sort({ createdAt: 1 });
+
+    // 5. Format response
+    const response = {
+      success: true,
+      captain: {
+        id: captain._id,
+        name: captain.name,
+        email: captain.email,
+        phoneNo: captain.phoneNo,
+        paymentStatus: captain.paymentStatus,
+        paymentDueDate: captain.paymentDueDate,
+        createdAt: captain.createdAt
+      },
+      team: {
+        _id: team._id,
+        teamName: team.teamName,
+        sportType: team.sportType || "General",
+        totalPlayers: team.totalPlayers,
+        currentPlayers: teamMembers.length,
+        status: team.status,
+        createdAt: team.createdAt,
+        updatedAt: team.updatedAt
+      },
+      members: teamMembers.map(member => ({
+        _id: member._id,
+        name: member.name,
+        mobile: member.mobile,
+        email: member.email,
+        role: member.role,
+        status: member.status,
+        createdAt: member.createdAt
+      })),
+      totalMembers: teamMembers.length
+    };
+
+    res.json(response);
+
+  } catch (err) {
+    console.error("❌ Admin get captain team error:", err);
+    
+    if (err.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid captain ID format"
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch captain's team",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
