@@ -130,8 +130,35 @@ exports.updatePaymentStatus = async (req, res) => {
       });
     }
 
+    // Find the captain first
+    const captain = await User.findById(id).select("-password");
+    
+    if (!captain) {
+      return res.status(404).json({
+        success: false,
+        message: "Captain not found"
+      });
+    }
+
+    // Check if captain belongs to the admin
+    // FIXED: Check if createdByAdmin exists before calling toString()
+    if (captain.createdByAdmin && captain.createdByAdmin.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only update captains created by you"
+      });
+    }
+
+    // If createdByAdmin doesn't exist, check if user is updating their own record
+    if (!captain.createdByAdmin && captain._id.toString() !== req.user.id && captain.role !== "teamCaptain") {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to update this captain"
+      });
+    }
+
     // Update payment status
-    const captain = await User.findByIdAndUpdate(
+    const updatedCaptain = await User.findByIdAndUpdate(
       id,
       { 
         paymentStatus: status,
@@ -144,25 +171,10 @@ exports.updatePaymentStatus = async (req, res) => {
       }
     ).select("-password");
 
-    if (!captain) {
-      return res.status(404).json({
-        success: false,
-        message: "Captain not found"
-      });
-    }
-
-    // Check if captain belongs to the admin
-    if (captain.createdByAdmin.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only update captains created by you"
-      });
-    }
-
     res.json({
       success: true,
       message: `Payment status updated to ${status}`,
-      captain
+      captain: updatedCaptain
     });
 
   } catch (err) {
@@ -177,7 +189,8 @@ exports.updatePaymentStatus = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Server error"
+      message: "Server error",
+      error: err.message
     });
   }
 };
