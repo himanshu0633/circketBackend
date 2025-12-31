@@ -11,7 +11,8 @@ const {
   deleteCaptain,
   resendWelcomeEmail,
   getCaptainStats,
-  getCaptainTeamByAdmin
+  getCaptainTeamByAdmin,
+  testEmail
 } = require("../controllers/adminController");
 
 const router = express.Router();
@@ -84,4 +85,9 @@ router.get(
   getMyTeam
 );
 
+
+
+
+// routes/teamCaptainRoutes.js में add करें
+router.post('/test-email', protect, testEmail);
 module.exports = router;

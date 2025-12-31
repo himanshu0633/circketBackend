@@ -3,7 +3,7 @@ const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const TeamMember = require("../models/TeamMember");
 const Team = require("../models/Team");
-const { sendWelcomeEmail } = require("../utils/emailConfig");
+const { sendWelcomeEmail, transporter } = require("../utils/emailConfig");
 
 exports.createTeamCaptain = async (req, res) => {
   try {
@@ -35,6 +35,14 @@ exports.createTeamCaptain = async (req, res) => {
       });
     }
 
+    // Password strength validation
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters"
+      });
+    }
+
     // Check if user exists
     const exists = await User.findOne({ email });
     if (exists) {
@@ -61,22 +69,45 @@ exports.createTeamCaptain = async (req, res) => {
       createdByAdmin: req.user.id,
       paymentStatus: "Pending",
       paymentDueDate,
+      emailSent: false, // Initialize emailSent flag
       image: req.file ? `/uploads/captains/${req.file.filename}` : null
     });
 
-    // Send welcome email (async - don't wait for response)
+    // Send welcome email with detailed logging
     let emailSent = false;
+    let emailErrorMsg = null;
+    let emailMessageId = null;
+    
     try {
-      await sendWelcomeEmail({
+      console.log(`📤 [Create Captain] Attempting to send email to: ${email}`);
+      console.log(`📨 [Create Captain] From: ${process.env.EMAIL_USER}`);
+      console.log(`🔑 [Create Captain] Password length: ${password.length}`);
+      
+      const emailResult = await sendWelcomeEmail({
         name,
         email,
         password, // Send plain password for initial login
         phoneNo
       });
+      
       emailSent = true;
-      console.log(`✅ Welcome email sent to ${email} for captain ${name}`);
+      emailMessageId = emailResult.messageId;
+      
+      console.log(`✅ [Create Captain] Welcome email sent successfully to ${email}`);
+      console.log(`📨 [Create Captain] Message ID: ${emailMessageId}`);
+      
+      // Update emailSent flag in database
+      captain.emailSent = true;
+      await captain.save();
+      
     } catch (emailError) {
-      console.error(`❌ Failed to send welcome email to ${email}:`, emailError.message);
+      emailErrorMsg = emailError.message;
+      console.error(`❌ [Create Captain] Failed to send welcome email to ${email}:`, {
+        message: emailError.message,
+        code: emailError.code,
+        stack: emailError.stack
+      });
+      
       // Don't fail the entire request if email fails
     }
 
@@ -84,17 +115,33 @@ exports.createTeamCaptain = async (req, res) => {
     const captainResponse = captain.toObject();
     delete captainResponse.password;
 
+    // Log final status
+    console.log(`📊 [Create Captain] Summary:`, {
+      name,
+      email,
+      phoneNo,
+      emailSent,
+      emailMessageId,
+      emailError: emailErrorMsg
+    });
+
     res.status(201).json({
       success: true,
       message: emailSent 
         ? "Captain created successfully. Welcome email sent." 
         : "Captain created successfully. Email notification failed.",
       captain: captainResponse,
-      emailSent
+      emailSent,
+      emailMessageId,
+      emailError: emailErrorMsg
     });
 
   } catch (err) {
-    console.error("❌ Create captain error:", err);
+    console.error("❌ [Create Captain] Error:", {
+      message: err.message,
+      stack: err.stack,
+      body: req.body
+    });
     
     // Handle specific errors
     if (err.name === 'ValidationError') {
@@ -119,16 +166,74 @@ exports.createTeamCaptain = async (req, res) => {
     });
   }
 };
+
+// Test Email Endpoint
+exports.testEmail = async (req, res) => {
+  try {
+    const testEmail = process.env.TEST_EMAIL || req.body.email;
+    
+    if (!testEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Test email required"
+      });
+    }
+
+    // Test email configuration
+    console.log("🔧 Testing email configuration...");
+    console.log("Email Host:", process.env.EMAIL_HOST);
+    console.log("Email Port:", process.env.EMAIL_PORT);
+    console.log("Email User:", process.env.EMAIL_USER ? "Set" : "Not Set");
+
+    await transporter.verify();
+    console.log("✅ Email server verified");
+
+    // Send test email
+    const mailOptions = {
+      from: `"Test Email" <${process.env.EMAIL_USER}>`,
+      to: testEmail,
+      subject: 'Test Email from CDS Premier League',
+      text: 'This is a test email from CDS Premier League Management System',
+      html: '<h1>Test Email</h1><p>This is a test email from CDS Premier League Management System</p>'
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    
+    console.log(`✅ Test email sent to ${testEmail}:`, info.messageId);
+    
+    res.json({
+      success: true,
+      message: `Test email sent successfully to ${testEmail}`,
+      messageId: info.messageId
+    });
+
+  } catch (error) {
+    console.error("❌ Email test failed:", error);
+    
+    res.status(500).json({
+      success: false,
+      message: "Email test failed",
+      error: error.message,
+      details: {
+        host: process.env.EMAIL_HOST,
+        port: process.env.EMAIL_PORT,
+        user: process.env.EMAIL_USER ? "Set" : "Not Set"
+      }
+    });
+  }
+};
+
 exports.updatePaymentStatus = async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
 
     // Validate status
-    if (!["Pending", "Paid"].includes(status)) {
+    const validStatuses = ["Pending", "Paid"];
+    if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid payment status. Must be 'Pending' or 'Paid'"
+        message: `Invalid payment status. Must be one of: ${validStatuses.join(", ")}`
       });
     }
 
@@ -142,36 +247,50 @@ exports.updatePaymentStatus = async (req, res) => {
       });
     }
 
-    // Check if captain belongs to the admin
-    // FIXED: Check if createdByAdmin exists before calling toString()
-    if (captain.createdByAdmin && captain.createdByAdmin.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only update captains created by you"
-      });
-    }
-
-    // If createdByAdmin doesn't exist, check if user is updating their own record
-    if (!captain.createdByAdmin && captain._id.toString() !== req.user.id && captain.role !== "teamCaptain") {
+    // Check permissions
+    if (req.user.role === "admin") {
+      // Admin can only update captains they created
+      if (captain.createdByAdmin && captain.createdByAdmin.toString() !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only update captains created by you"
+        });
+      }
+    } else if (captain._id.toString() !== req.user.id) {
+      // Captains can only update their own status
       return res.status(403).json({
         success: false,
         message: "You don't have permission to update this captain"
       });
     }
 
+    // Prepare update data
+    const updateData = { paymentStatus: status };
+    
+    if (status === "Paid") {
+      updateData.paymentDueDate = null;
+      updateData.paymentDate = new Date();
+    } else if (status === "Pending") {
+      // Set due date 7 days from now if not already set
+      if (!captain.paymentDueDate) {
+        const paymentDueDate = new Date();
+        paymentDueDate.setDate(paymentDueDate.getDate() + 7);
+        updateData.paymentDueDate = paymentDueDate;
+      }
+    }
+
     // Update payment status
     const updatedCaptain = await User.findByIdAndUpdate(
       id,
-      { 
-        paymentStatus: status,
-        // If marking as paid, remove due date
-        ...(status === "Paid" && { paymentDueDate: null })
-      },
+      updateData,
       { 
         new: true,
         runValidators: true 
       }
     ).select("-password");
+
+    // Log the update
+    console.log(`💰 [Payment Update] Captain ${updatedCaptain.email}: ${status}`);
 
     res.json({
       success: true,
@@ -180,7 +299,7 @@ exports.updatePaymentStatus = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ Update payment error:", err);
+    console.error("❌ [Payment Update] Error:", err);
     
     if (err.name === 'CastError') {
       return res.status(400).json({
@@ -192,10 +311,11 @@ exports.updatePaymentStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: err.message
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
+
 exports.getMyTeamCaptains = async (req, res) => {
   try {
     const captains = await User.find({
@@ -203,37 +323,51 @@ exports.getMyTeamCaptains = async (req, res) => {
       createdByAdmin: req.user.id
     })
     .select("-password")
-    .sort({ createdAt: -1 }); // Sort by newest first
+    .sort({ createdAt: -1 });
 
     // Calculate stats
     const total = captains.length;
     const paid = captains.filter(c => c.paymentStatus === "Paid").length;
     const pending = total - paid;
 
+    // Get captains with upcoming payments
+    const today = new Date();
+    const upcomingCaptains = captains.filter(c => 
+      c.paymentStatus === "Pending" && 
+      c.paymentDueDate && 
+      c.paymentDueDate <= new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000)
+    ).length;
+
     res.json({
       success: true,
       total,
-      stats: { total, paid, pending },
+      stats: { 
+        total, 
+        paid, 
+        pending, 
+        upcomingPayments: upcomingCaptains 
+      },
       captains
     });
   } catch (err) {
     console.error("❌ Get captains error:", err);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch team captains"
+      message: "Failed to fetch team captains",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
+
 exports.getMyTeam = async (req, res) => {
   try {
-    // Current logged-in user की ID (req.user.id middleware से आएगी)
     const currentUserId = req.user.id;
     
-    // पहले current user को TeamMember में ढूंढ़ें
+    // Find current user in TeamMember
     const currentTeamMember = await TeamMember.findOne({
       $or: [
         { _id: currentUserId },
-        { email: req.user.email } // अगर user email से login है तो
+        { email: req.user.email }
       ]
     });
 
@@ -244,8 +378,8 @@ exports.getMyTeam = async (req, res) => {
       });
     }
 
-    // Current user की teamId से टीम ढूंढ़ें
-    const team = await mongoose.model("Team").findById(currentTeamMember.teamId)
+    // Get team details
+    const team = await Team.findById(currentTeamMember.teamId)
       .populate('captainId', 'name email phoneNo')
       .select('-__v');
 
@@ -256,7 +390,7 @@ exports.getMyTeam = async (req, res) => {
       });
     }
 
-    // उस टीम के सभी members ढूंढ़ें
+    // Get all team members
     const teamMembers = await TeamMember.find({ teamId: currentTeamMember.teamId })
       .select('-__v')
       .sort({ createdAt: 1 });
@@ -304,10 +438,12 @@ exports.getMyTeam = async (req, res) => {
     });
   }
 };
+
 exports.deleteCaptain = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Check if captain exists and belongs to this admin
     const captain = await User.findOne({
       _id: id,
       role: "teamCaptain",
@@ -321,7 +457,18 @@ exports.deleteCaptain = async (req, res) => {
       });
     }
 
+    // Check if captain has a team
+    const team = await Team.findOne({ captainId: id });
+    if (team) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete captain who has an active team. Delete the team first."
+      });
+    }
+
     await captain.deleteOne();
+    
+    console.log(`🗑️ Captain deleted: ${captain.email}`);
 
     res.json({
       success: true,
@@ -340,10 +487,12 @@ exports.deleteCaptain = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Failed to delete captain"
+      message: "Failed to delete captain",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
+
 exports.resendWelcomeEmail = async (req, res) => {
   try {
     const { id } = req.params;
@@ -361,42 +510,61 @@ exports.resendWelcomeEmail = async (req, res) => {
       });
     }
 
-    // Note: In production, you might want to generate a temporary password
-    // instead of using the stored hashed password
-    await sendWelcomeEmail({
-      name: captain.name,
-      email: captain.email,
-      password: "Use the password you set during registration",
-      phoneNo: captain.phoneNo
-    });
+    try {
+      // For resend, we won't send the password again
+      await sendWelcomeEmail({
+        name: captain.name,
+        email: captain.email,
+        password: "[Use your existing password]",
+        phoneNo: captain.phoneNo
+      });
 
-    res.json({
-      success: true,
-      message: `Welcome email resent to ${captain.email}`
-    });
+      // Update emailSent flag
+      captain.emailSent = true;
+      await captain.save();
+
+      console.log(`📧 Welcome email resent to ${captain.email}`);
+
+      res.json({
+        success: true,
+        message: `Welcome email resent to ${captain.email}`,
+        note: "Captain should use their existing password to login"
+      });
+
+    } catch (emailError) {
+      console.error(`❌ Failed to resend email to ${captain.email}:`, emailError);
+      
+      res.status(500).json({
+        success: false,
+        message: "Failed to send email. Please check email configuration.",
+        error: process.env.NODE_ENV === 'development' ? emailError.message : undefined
+      });
+    }
 
   } catch (err) {
     console.error("❌ Resend email error:", err);
     
-    if (err.message.includes('Failed to send welcome email')) {
-      return res.status(500).json({
+    if (err.name === 'CastError') {
+      return res.status(400).json({
         success: false,
-        message: "Failed to send email. Please check email configuration."
+        message: "Invalid captain ID"
       });
     }
 
     res.status(500).json({
       success: false,
-      message: "Failed to resend welcome email"
+      message: "Failed to resend welcome email",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
+
 exports.getCaptainStats = async (req, res) => {
   try {
     const captains = await User.find({
       role: "teamCaptain",
       createdByAdmin: req.user.id
-    }).select("paymentStatus");
+    }).select("paymentStatus paymentDueDate");
 
     const total = captains.length;
     const paid = captains.filter(c => c.paymentStatus === "Paid").length;
@@ -407,15 +575,19 @@ exports.getCaptainStats = async (req, res) => {
     const threeDaysLater = new Date();
     threeDaysLater.setDate(today.getDate() + 3);
 
-    const upcomingPayments = await User.countDocuments({
-      role: "teamCaptain",
-      createdByAdmin: req.user.id,
-      paymentStatus: "Pending",
-      paymentDueDate: {
-        $gte: today,
-        $lte: threeDaysLater
-      }
-    });
+    const upcomingPayments = captains.filter(c => 
+      c.paymentStatus === "Pending" && 
+      c.paymentDueDate && 
+      c.paymentDueDate <= threeDaysLater &&
+      c.paymentDueDate >= today
+    ).length;
+
+    // Calculate overdue payments
+    const overduePayments = captains.filter(c => 
+      c.paymentStatus === "Pending" && 
+      c.paymentDueDate && 
+      c.paymentDueDate < today
+    ).length;
 
     res.json({
       success: true,
@@ -423,7 +595,8 @@ exports.getCaptainStats = async (req, res) => {
         total,
         paid,
         pending,
-        upcomingPayments
+        upcomingPayments,
+        overduePayments
       }
     });
 
@@ -431,15 +604,17 @@ exports.getCaptainStats = async (req, res) => {
     console.error("❌ Get stats error:", err);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch statistics"
+      message: "Failed to fetch statistics",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
+
 exports.getCaptainTeamByAdmin = async (req, res) => {
   try {
     const { captainId } = req.params;
 
-    // 1. Validate admin role (middleware se aaya hoga, phir bhi check)
+    // Check admin role
     if (req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
@@ -447,7 +622,7 @@ exports.getCaptainTeamByAdmin = async (req, res) => {
       });
     }
 
-    // 2. Captain exists and was created by this admin
+    // Get captain details
     const captain = await User.findOne({
       _id: captainId,
       role: "teamCaptain",
@@ -461,33 +636,20 @@ exports.getCaptainTeamByAdmin = async (req, res) => {
       });
     }
 
-    // 3. Get captain's team
+    // Get captain's team
     const team = await Team.findOne({ captainId: captainId })
       .populate('captainId', 'name email phoneNo paymentStatus')
       .select('-__v');
 
-    if (!team) {
-      return res.json({
-        success: true,
-        message: "Captain hasn't created a team yet",
-        captain: {
-          id: captain._id,
-          name: captain.name,
-          email: captain.email,
-          phoneNo: captain.phoneNo,
-          paymentStatus: captain.paymentStatus
-        },
-        team: null,
-        members: []
-      });
+    // Get team members if team exists
+    let teamMembers = [];
+    if (team) {
+      teamMembers = await TeamMember.find({ teamId: team._id })
+        .select('-__v')
+        .sort({ createdAt: 1 });
     }
 
-    // 4. Get team members
-    const teamMembers = await TeamMember.find({ teamId: team._id })
-      .select('-__v')
-      .sort({ createdAt: 1 });
-
-    // 5. Format response
+    // Format response
     const response = {
       success: true,
       captain: {
@@ -497,9 +659,10 @@ exports.getCaptainTeamByAdmin = async (req, res) => {
         phoneNo: captain.phoneNo,
         paymentStatus: captain.paymentStatus,
         paymentDueDate: captain.paymentDueDate,
+        emailSent: captain.emailSent,
         createdAt: captain.createdAt
       },
-      team: {
+      team: team ? {
         _id: team._id,
         teamName: team.teamName,
         sportType: team.sportType || "General",
@@ -508,7 +671,7 @@ exports.getCaptainTeamByAdmin = async (req, res) => {
         status: team.status,
         createdAt: team.createdAt,
         updatedAt: team.updatedAt
-      },
+      } : null,
       members: teamMembers.map(member => ({
         _id: member._id,
         name: member.name,
@@ -536,6 +699,80 @@ exports.getCaptainTeamByAdmin = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch captain's team",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+};
+
+// Add this route to routes file
+exports.updateCaptain = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, phoneNo } = req.body;
+
+    // Validation
+    if (!name && !phoneNo) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one field (name or phoneNo) is required to update"
+      });
+    }
+
+    // Phone validation if provided
+    if (phoneNo) {
+      const phoneRegex = /^\d{10}$/;
+      if (!phoneRegex.test(phoneNo)) {
+        return res.status(400).json({
+          success: false,
+          message: "Phone number must be 10 digits"
+        });
+      }
+    }
+
+    // Find and update captain
+    const captain = await User.findOneAndUpdate(
+      {
+        _id: id,
+        role: "teamCaptain",
+        createdByAdmin: req.user.id
+      },
+      {
+        ...(name && { name }),
+        ...(phoneNo && { phoneNo }),
+        ...(req.file && { image: `/uploads/captains/${req.file.filename}` })
+      },
+      {
+        new: true,
+        runValidators: true
+      }
+    ).select("-password");
+
+    if (!captain) {
+      return res.status(404).json({
+        success: false,
+        message: "Captain not found or you don't have permission"
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Captain updated successfully",
+      captain
+    });
+
+  } catch (err) {
+    console.error("❌ Update captain error:", err);
+    
+    if (err.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid captain ID"
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to update captain",
       error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
