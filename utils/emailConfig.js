@@ -1,8 +1,10 @@
-// utils/emailConfig.js
-const nodemailer = require('nodemailer');
+const nodemailer = require("nodemailer");
 
+/* --------------------------------------------------
+   EMAIL TRANSPORTER
+-------------------------------------------------- */
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+  host: process.env.EMAIL_HOST || "smtp.gmail.com",
   port: process.env.EMAIL_PORT || 587,
   secure: false,
   auth: {
@@ -14,8 +16,10 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// Test email configuration
-transporter.verify(function(error, success) {
+/* --------------------------------------------------
+   VERIFY EMAIL CONFIG
+-------------------------------------------------- */
+transporter.verify((error, success) => {
   if (error) {
     console.log("❌ Email configuration error:", error);
   } else {
@@ -23,79 +27,95 @@ transporter.verify(function(error, success) {
   }
 });
 
+/* --------------------------------------------------
+   WELCOME EMAIL (CAPTAIN ACCOUNT)
+-------------------------------------------------- */
 const sendWelcomeEmail = async ({ name, email, password, phoneNo }) => {
   try {
     const mailOptions = {
       from: `"CDS Premier League" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: 'Welcome to CDS Premier League - Captain Account Created',
+      subject: "Welcome to CDS Premier League - Captain Account Created",
       html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: #4CAF50; color: white; padding: 20px; text-align: center; }
-            .content { padding: 30px; background: #f9f9f9; }
-            .credentials { background: #fff; border: 2px solid #4CAF50; padding: 20px; margin: 20px 0; }
-            .footer { text-align: center; margin-top: 30px; color: #666; }
-            .btn { 
-              display: inline-block; 
-              background: #4CAF50; 
-              color: white; 
-              padding: 12px 24px; 
-              text-decoration: none; 
-              border-radius: 5px;
-              margin: 10px 0;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>Welcome to CDS Premier League!</h1>
-            </div>
-            <div class="content">
-              <h2>Hello ${name},</h2>
-              <p>Your captain account has been successfully created.</p>
-              
-              <div class="credentials">
-                <h3>Your Login Credentials:</h3>
-                <p><strong>Email:</strong> ${email}</p>
-                <p><strong>Password:</strong> ${password}</p>
-                <p><strong>Phone:</strong> ${phoneNo}</p>
-              </div>
-              
-              <p><strong>Important:</strong></p>
-              <ul>
-                <li>Please login and change your password immediately</li>
-                <li>Payment due date: Within 7 days</li>
-                <li>Payment status: Pending</li>
-                <li>You can now create your team and add players</li>
-              </ul>
-              
-              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/login" class="btn">Login to Your Account</a>
-              
-              <p>If you have any questions, please contact the admin.</p>
-            </div>
-            <div class="footer">
-              <p>© ${new Date().getFullYear()} CDS Premier League Management System</p>
-            </div>
-          </div>
-        </body>
-        </html>
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+          <h2>Welcome to CDS Premier League!</h2>
+          <p>Hello <b>${name}</b>,</p>
+
+          <p>Your captain account has been successfully created.</p>
+
+          <h3>Login Credentials</h3>
+          <p><b>Email:</b> ${email}</p>
+          <p><b>Password:</b> ${password}</p>
+          <p><b>Phone:</b> ${phoneNo}</p>
+
+          <p><b>Important:</b></p>
+          <ul>
+            <li>Please login and change your password</li>
+            <li>Payment status: Pending</li>
+            <li>You can now create your team and add players</li>
+          </ul>
+
+          <a href="${process.env.FRONTEND_URL || "http://localhost:3000"}/login"
+             style="display:inline-block;padding:10px 20px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;">
+            Login Now
+          </a>
+
+          <p style="margin-top:20px;">
+            © ${new Date().getFullYear()} CDS Premier League
+          </p>
+        </div>
       `
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`📧 Email sent successfully to ${email}:`, info.messageId);
+    console.log(`📧 Welcome email sent to ${email}:`, info.messageId);
     return info;
-    
+
   } catch (error) {
-    console.error(`❌ Email sending failed to ${email}:`, error.message);
+    console.error(`❌ Welcome email failed to ${email}:`, error.message);
     throw error;
   }
 };
 
-module.exports = { sendWelcomeEmail, transporter };
+/* --------------------------------------------------
+   SLOT BOOKING EMAIL
+-------------------------------------------------- */
+const sendBookingEmail = async ({ to, teamName, slotDate, startTime, endTime, groundName }) => {
+  try {
+    const subject = `Slot Booking Confirmed | ${slotDate} (${startTime}-${endTime})`;
+
+    const html = `
+      <div style="font-family: Arial, sans-serif;">
+        <h2>Slot Booking Confirmed ✅</h2>
+        <p><b>Team:</b> ${teamName}</p>
+        <p><b>Date:</b> ${slotDate}</p>
+        <p><b>Time:</b> ${startTime} - ${endTime}</p>
+        <p><b>Ground:</b> ${groundName}</p>
+        <p>Thank you for booking.</p>
+      </div>
+    `;
+
+    const info = await transporter.sendMail({
+      from: `"CDS Premier League" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      html
+    });
+
+    console.log(`📧 Booking email sent to ${to}:`, info.messageId);
+    return info;
+
+  } catch (error) {
+    console.error(`❌ Booking email failed to ${to}:`, error.message);
+    throw error;
+  }
+};
+
+/* --------------------------------------------------
+   EXPORTS (IMPORTANT)
+-------------------------------------------------- */
+module.exports = {
+  transporter,
+  sendWelcomeEmail,
+  sendBookingEmail
+};

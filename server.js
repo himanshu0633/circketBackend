@@ -15,6 +15,11 @@ app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/team", require("./routes/teamRoutes"));
 app.use('/api/profile', require('./routes/profileRoutes'));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+
+app.use("/api/admin/slots", require("./routes/adminSlot.routes"));
+app.use("/api/slots", require("./routes/slot.routes"));
+app.use("/api/bookings", require("./routes/booking.routes"));
 app.listen(4000, () =>
   console.log("Server running on port 4000")
 );
