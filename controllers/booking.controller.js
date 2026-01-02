@@ -1,3 +1,5 @@
+// booking.controller.js - Complete updated code
+
 const mongoose = require("mongoose");
 const Slot = require("../models/Slot");
 const SlotBooking = require("../models/SlotBooking");
@@ -82,7 +84,13 @@ const bookSlot = async (req, res) => {
         throw new Error("This team has already booked this slot");
       }
 
-      // 4️⃣ Create booking
+      // 4️⃣ Get team name for adding to bookedTeams
+      const team = await Team.findById(teamId).session(session);
+      if (!team) {
+        throw new Error("Team not found");
+      }
+
+      // 5️⃣ Create booking
       await SlotBooking.create([{
         slotId,
         groundId: slot.groundId,
@@ -92,9 +100,37 @@ const bookSlot = async (req, res) => {
         paymentStatus: "pending"
       }], { session });
 
+      // 6️⃣ Update slot's bookedTeams array and bookedCount
+      const updatedSlot = await Slot.findByIdAndUpdate(
+        slotId,
+        {
+          $addToSet: { bookedTeams: team.teamName },
+          $inc: { bookedCount: 1 }
+        },
+        { new: true, session }
+      );
+
+      // 7️⃣ Calculate remaining and isFull
+      const newBookedCount = updatedSlot.bookedCount || confirmedCount + 1;
+      const remaining = slot.capacity - newBookedCount;
+      const isFull = remaining <= 0;
+
+      // Update isFull if needed
+      if (isFull !== slot.isFull) {
+        await Slot.findByIdAndUpdate(
+          slotId,
+          { isFull },
+          { session }
+        );
+      }
+
     });
 
-    res.json({ success: true, message: "Slot booked successfully" });
+    res.json({ 
+      success: true, 
+      message: "Slot booked successfully",
+      updatedSlot: true 
+    });
 
   } catch (error) {
     res.status(409).json({
@@ -113,4 +149,93 @@ const bookSlot = async (req, res) => {
     }
   }
 };
-module.exports = {bookSlot};
+
+/* --------------------------------------------------
+   📌 GET TEAM BOOKINGS
+-------------------------------------------------- */
+const getTeamBookings = async (req, res) => {
+  try {
+    const { teamId } = req.params;
+
+    const bookings = await SlotBooking.find({
+      teamId,
+      bookingStatus: "confirmed"
+    })
+    .populate("slotId", "slotDate startTime endTime")
+    .populate("groundId", "name")
+    .sort({ createdAt: -1 })
+    .lean();
+
+    res.json({
+      success: true,
+      bookings
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/* --------------------------------------------------
+   📌 CANCEL BOOKING
+-------------------------------------------------- */
+const cancelBooking = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const { bookingId } = req.params;
+
+    await session.withTransaction(async () => {
+      // 1️⃣ Find booking
+      const booking = await SlotBooking.findOne({
+        _id: bookingId,
+        bookingStatus: "confirmed"
+      }).session(session);
+
+      if (!booking) {
+        throw new Error("Booking not found");
+      }
+
+      // 2️⃣ Get team name
+      const team = await Team.findById(booking.teamId).session(session);
+      
+      // 3️⃣ Update booking status
+      await SlotBooking.findByIdAndUpdate(
+        bookingId,
+        { bookingStatus: "cancelled" },
+        { session }
+      );
+
+      // 4️⃣ Update slot's bookedTeams and bookedCount
+      if (team && team.teamName) {
+        await Slot.findByIdAndUpdate(
+          booking.slotId,
+          {
+            $pull: { bookedTeams: team.teamName },
+            $inc: { bookedCount: -1 },
+            isFull: false
+          },
+          { session }
+        );
+      }
+    });
+
+    res.json({
+      success: true,
+      message: "Booking cancelled successfully"
+    });
+
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+module.exports = { bookSlot, getTeamBookings, cancelBooking };
