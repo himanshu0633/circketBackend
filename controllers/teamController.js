@@ -1,99 +1,8 @@
 const TeamMember = require("../models/TeamMember");
 const User = require("../models/User");
 const Team = require("../models/Team");
-/* ===================== ADD MEMBER ===================== */
-exports.addMember = async (req, res) => {
-  try {
-    console.log("➡️ Add Member API called");
-    console.log("User ID:", req.user?.id);
-    console.log("Request Body:", req.body);
 
-    const captain = await User.findById(req.user.id);
-
-    if (!captain) {
-      return res.status(404).json({
-        success: false,
-        message: "Captain not found"
-      });
-    }
-
-    let memberStatus = "Pending";
-
-    if (
-      captain.paymentStatus === "Paid" &&
-      captain.paymentDueDate &&
-      new Date() <= new Date(captain.paymentDueDate)
-    ) {
-      memberStatus = "Active";
-    }
-
-    const member = await TeamMember.create({
-      captainId: req.user.id,
-      ...req.body,
-      status: memberStatus
-    });
-
-    res.json({
-      success: true,
-      message: "Team member added successfully",
-      member
-    });
-
-  } catch (err) {
-    console.error("❌ ERROR in addMember API");
-    console.error("Message:", err.message);
-    console.error("Name:", err.name);
-    console.error("Stack Trace:\n", err.stack);
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to add team member",
-      error: err.message,
-      errorType: err.name
-    });
-  }
-};
-exports.addPlayers = async (req, res) => {
-  try {
-    const { teamId, players } = req.body;
-
-    if (!Array.isArray(players) || players.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Players array required"
-      });
-    }
-
-    const team = await Team.findOne({
-      _id: teamId,
-      captainId: req.user.id
-    });
-
-    if (!team) {
-      return res.status(404).json({
-        success: false,
-        message: "Team not found"
-      });
-    }
-
-    const members = players.map(player => ({
-      teamId,
-      captainId: req.user.id,
-      ...player,
-      status: team.status // Active or Pending
-    }));
-
-    await TeamMember.insertMany(members);
-
-    res.json({
-      success: true,
-      message: "Players added successfully"
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
-
+/* ===================== CREATE TEAM ===================== */
 exports.createTeam = async (req, res) => {
   try {
     const { teamName, totalPlayers } = req.body;
@@ -151,6 +60,48 @@ exports.getMyTeam = async (req, res) => {
   }
 };
 
+/* ===================== ADD PLAYERS ===================== */
+exports.addPlayers = async (req, res) => {
+  try {
+    const { teamId, players } = req.body;
+
+    if (!Array.isArray(players) || players.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Players array required"
+      });
+    }
+
+    const team = await Team.findOne({
+      _id: teamId,
+      captainId: req.user.id
+    });
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        message: "Team not found"
+      });
+    }
+
+    const members = players.map(player => ({
+      teamId,
+      captainId: req.user.id,
+      ...player,
+      status: team.status // Active or Pending
+    }));
+
+    await TeamMember.insertMany(members);
+
+    res.json({
+      success: true,
+      message: "Players added successfully"
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 /* ===================== UPDATE MEMBER ===================== */
 exports.updateMember = async (req, res) => {
   try {
@@ -201,3 +152,55 @@ exports.deleteMember = async (req, res) => {
   }
 };
 
+/* ===================== ADD SINGLE MEMBER (Optional) ===================== */
+exports.addMember = async (req, res) => {
+  try {
+    console.log("➡️ Add Member API called");
+    console.log("User ID:", req.user?.id);
+    console.log("Request Body:", req.body);
+
+    const captain = await User.findById(req.user.id);
+
+    if (!captain) {
+      return res.status(404).json({
+        success: false,
+        message: "Captain not found"
+      });
+    }
+
+    let memberStatus = "Pending";
+
+    if (
+      captain.paymentStatus === "Paid" &&
+      captain.paymentDueDate &&
+      new Date() <= new Date(captain.paymentDueDate)
+    ) {
+      memberStatus = "Active";
+    }
+
+    const member = await TeamMember.create({
+      captainId: req.user.id,
+      ...req.body,
+      status: memberStatus
+    });
+
+    res.json({
+      success: true,
+      message: "Team member added successfully",
+      member
+    });
+
+  } catch (err) {
+    console.error("❌ ERROR in addMember API");
+    console.error("Message:", err.message);
+    console.error("Name:", err.name);
+    console.error("Stack Trace:\n", err.stack);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to add team member",
+      error: err.message,
+      errorType: err.name
+    });
+  }
+};
