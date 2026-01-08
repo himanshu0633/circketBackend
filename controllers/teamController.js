@@ -7,7 +7,7 @@ exports.createTeam = async (req, res) => {
   try {
     const { teamName, totalPlayers } = req.body;
 
-    const captain = await User.findById(req.user.id);
+    const captain = await User.findById(req.user._id);
     if (!captain) {
       return res.status(404).json({ success: false, message: "Captain not found" });
     }
@@ -37,7 +37,7 @@ exports.createTeam = async (req, res) => {
 /* ===================== GET MY TEAM ===================== */
 exports.getMyTeam = async (req, res) => {
   try {
-    const team = await Team.findOne({ captainId: req.user.id });
+    const team = await Team.findOne({ captainId: req.user._id });
 
     if (!team) {
       return res.json({
@@ -74,7 +74,7 @@ exports.addPlayers = async (req, res) => {
 
     const team = await Team.findOne({
       _id: teamId,
-      captainId: req.user.id
+      captainId: req.user._id
     });
 
     if (!team) {
@@ -86,7 +86,7 @@ exports.addPlayers = async (req, res) => {
 
     const members = players.map(player => ({
       teamId,
-      captainId: req.user.id,
+      captainId: req.user._id,
       ...player,
       status: team.status // Active or Pending
     }));
@@ -106,7 +106,7 @@ exports.addPlayers = async (req, res) => {
 exports.updateMember = async (req, res) => {
   try {
     const member = await TeamMember.findOneAndUpdate(
-      { _id: req.params.id, captainId: req.user.id },
+      { _id: req.params.id, captainId: req.user._id },
       req.body,
       { new: true, runValidators: true }
     );
@@ -133,7 +133,7 @@ exports.deleteMember = async (req, res) => {
   try {
     const member = await TeamMember.findOneAndDelete({
       _id: req.params.id,
-      captainId: req.user.id
+      captainId: req.user._id
     });
 
     if (!member) {
@@ -159,7 +159,7 @@ exports.addMember = async (req, res) => {
     console.log("User ID:", req.user?.id);
     console.log("Request Body:", req.body);
 
-    const captain = await User.findById(req.user.id);
+    const captain = await User.findById(req.user._id);
 
     if (!captain) {
       return res.status(404).json({
@@ -179,7 +179,7 @@ exports.addMember = async (req, res) => {
     }
 
     const member = await TeamMember.create({
-      captainId: req.user.id,
+      captainId: req.user._id,
       ...req.body,
       status: memberStatus
     });

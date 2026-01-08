@@ -1,6 +1,5 @@
 const express = require("express");
-const { protect } = require("../middleware/authMiddleware");
-const { isAdmin } = require("../middleware/adminMiddleware");
+const { verifyToken, isAdmin } = require("../middleware/authMiddleware");
 const upload = require("../middleware/upload");
 
 const {
@@ -17,12 +16,14 @@ const {
 
 const router = express.Router();
 
-/* ================== TEAM CAPTAIN MANAGEMENT ================== */
+/* =====================================================
+   TEAM CAPTAIN MANAGEMENT (ADMIN ONLY)
+===================================================== */
 
-// Create Team Captain (Admin only + Image Upload)
+// Create Team Captain (Admin + Image Upload)
 router.post(
   "/createTeamCaptain",
-  protect,
+  verifyToken,
   isAdmin,
   upload.single("image"),
   createTeamCaptain
@@ -31,15 +32,15 @@ router.post(
 // Get captains created by logged-in admin
 router.get(
   "/myTeamCaptains",
-  protect,
+  verifyToken,
   isAdmin,
   getMyTeamCaptains
 );
 
-// Get captain statistics (cards / dashboard stats)
+// Get captain dashboard stats
 router.get(
   "/captain-stats",
-  protect,
+  verifyToken,
   isAdmin,
   getCaptainStats
 );
@@ -47,15 +48,15 @@ router.get(
 // Update payment status (Pending / Paid)
 router.put(
   "/updatePayment/:id",
-  protect,
+  verifyToken,
   isAdmin,
   updatePaymentStatus
 );
 
-// Delete a captain
+// Delete a team captain
 router.delete(
   "/deleteCaptain/:id",
-  protect,
+  verifyToken,
   isAdmin,
   deleteCaptain
 );
@@ -63,7 +64,7 @@ router.delete(
 // Resend welcome email to captain
 router.post(
   "/resendWelcomeEmail/:id",
-  protect,
+  verifyToken,
   isAdmin,
   resendWelcomeEmail
 );
@@ -71,23 +72,28 @@ router.post(
 // Admin → View a specific captain’s team
 router.get(
   "/captain/:captainId/team",
-  protect,
+  verifyToken,
   isAdmin,
   getCaptainTeamByAdmin
 );
 
-/* ================== TEAM MEMBER / CAPTAIN SIDE ================== */
+/* =====================================================
+   TEAM CAPTAIN / MEMBER SIDE
+===================================================== */
 
 // Logged-in user → get own team (Captain / Member)
 router.get(
   "/my-team",
-  protect,
+  verifyToken,
   getMyTeam
 );
 
+// Test email (Admin only)
+router.post(
+  "/test-email",
+  verifyToken,
+  isAdmin,
+  testEmail
+);
 
-
-
-// routes/teamCaptainRoutes.js में add करें
-router.post('/test-email', protect, testEmail);
 module.exports = router;

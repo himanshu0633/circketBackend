@@ -1,6 +1,7 @@
 const express = require("express");
-const { protect } = require("../middleware/authMiddleware");
+const { verifyToken } = require("../middleware/authMiddleware");
 const upload = require("../middleware/upload");
+
 const {
   createTeam,
   addPlayers,
@@ -11,10 +12,43 @@ const {
 
 const router = express.Router();
 
-router.post("/create-team", protect, createTeam);
-router.get("/my-team", protect, getMyTeam);
-router.post("/add-players", protect, addPlayers);
-router.put("/member/:id", protect, updateMember);
-router.delete("/member/:id", protect, deleteMember);
+/* =====================================================
+   TEAM MANAGEMENT (CAPTAIN / MEMBER)
+===================================================== */
+
+// Create team (Only logged-in users)
+router.post(
+  "/create-team",
+  verifyToken,
+  createTeam
+);
+
+// Get logged-in user's team
+router.get(
+  "/my-team",
+  verifyToken,
+  getMyTeam
+);
+
+// Add players to team
+router.post(
+  "/add-players",
+  verifyToken,
+  addPlayers
+);
+
+// Update a team member
+router.put(
+  "/member/:id",
+  verifyToken,
+  updateMember
+);
+
+// Delete a team member
+router.delete(
+  "/member/:id",
+  verifyToken,
+  deleteMember
+);
 
 module.exports = router;

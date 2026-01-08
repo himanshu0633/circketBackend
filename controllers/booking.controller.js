@@ -1,5 +1,3 @@
-// booking.controller.js - Complete updated code with console logs
-
 const mongoose = require("mongoose");
 const Slot = require("../models/Slot");
 const SlotBooking = require("../models/SlotBooking");
@@ -14,27 +12,19 @@ console.log("🔧 Booking controller loaded");
 -------------------------------------------------- */
 const sendBookingNotificationEmail = async ({ slotId, teamId, captainId }) => {
   console.log("📧 Starting email notification process");
-  console.log(`📧 Parameters: slotId=${slotId}, teamId=${teamId}, captainId=${captainId}`);
   
   try {
-    console.log("📧 Fetching team, captain and slot details...");
     const [team, captain, slot] = await Promise.all([
       Team.findById(teamId).lean(),
       User.findById(captainId).lean(),
       Slot.findById(slotId).populate("groundId", "name").lean()
     ]);
 
-    console.log(`📧 Team found: ${team ? team.teamName : 'No'}`);
-    console.log(`📧 Captain found: ${captain ? captain.name : 'No'}, Email: ${captain?.email || 'No email'}`);
-    console.log(`📧 Slot found: ${slot ? 'Yes' : 'No'}, Ground: ${slot?.groundId?.name || 'Unknown'}`);
-
     if (!captain?.email) {
       console.log("❌ Email notification skipped: No captain email");
       return;
     }
 
-    console.log("📧 Preparing to send email to:", captain.email);
-    
     await sendBookingEmail({
       to: captain.email,
       teamName: team?.teamName || "Team",
@@ -48,17 +38,16 @@ const sendBookingNotificationEmail = async ({ slotId, teamId, captainId }) => {
 
   } catch (error) {
     console.error("❌ Booking email failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
   }
 };
 
 /* --------------------------------------------------
-   📌 BOOK SLOT
+   📌 BOOK SLOT - FIXED VERSION
 -------------------------------------------------- */
 const bookSlot = async (req, res) => {
   console.log("🚀 BOOK SLOT API CALLED");
-  console.log(`👤 User: ${req.user._id}, Role: ${req.user.role}`);
-  console.log(`📋 Params: ${JSON.stringify(req.params)}`);
+  console.log(`👤 User from token:`, req.user);
+  console.log(`📋 Slot ID: ${req.params.slotId}`);
   console.log(`📦 Body: ${JSON.stringify(req.body)}`);
 
   const session = await mongoose.startSession();
@@ -69,8 +58,12 @@ const bookSlot = async (req, res) => {
   try {
     const { slotId } = req.params;
     const { teamId } = req.body;
+    
+    // Use captainId from token instead of body for security
     const captainId = req.user._id;
 
+    console.log(`📝 Using captainId from token: ${captainId}`);
+    
     bookedSlotId = slotId;
     bookedTeamId = teamId;
     bookedCaptainId = captainId;
@@ -81,7 +74,7 @@ const bookSlot = async (req, res) => {
       console.log("✅ Transaction started");
 
       // 1️⃣ Slot exists & enabled
-      console.log(`🔍 Step 1: Checking slot availability (slotId: ${slotId})`);
+      console.log(`🔍 Step 1: Checking slot availability`);
       const slot = await Slot.findOne({
         _id: slotId,
         isDisabled: false
@@ -91,11 +84,10 @@ const bookSlot = async (req, res) => {
         console.log("❌ Slot not found or disabled");
         throw new Error("Slot not available");
       }
-      console.log(`✅ Slot found: ${slot._id}, Date: ${slot.slotDate}, Time: ${slot.startTime}-${slot.endTime}`);
-      console.log(`ℹ️ Slot capacity: ${slot.capacity}, isFull: ${slot.isFull}`);
+      console.log(`✅ Slot found: ${slot._id}, Date: ${slot.slotDate}`);
 
       // 2️⃣ Capacity check
-      console.log(`🔍 Step 2: Checking capacity for slot: ${slotId}`);
+      console.log(`🔍 Step 2: Checking capacity`);
       const confirmedCount = await SlotBooking.countDocuments({
         slotId,
         bookingStatus: "confirmed"
@@ -109,7 +101,7 @@ const bookSlot = async (req, res) => {
       }
 
       // 3️⃣ Prevent same team double booking
-      console.log(`🔍 Step 3: Checking if team ${teamId} already booked this slot`);
+      console.log(`🔍 Step 3: Checking if team already booked this slot`);
       const alreadyBooked = await SlotBooking.findOne({
         slotId,
         teamId,
@@ -122,28 +114,35 @@ const bookSlot = async (req, res) => {
       }
       console.log("✅ Team hasn't booked this slot before");
 
-      // 4️⃣ Get team and captain details
-      console.log(`🔍 Step 4: Fetching team and captain details`);
-      const [team, captain] = await Promise.all([
-        Team.findById(teamId).session(session),
-        User.findById(captainId).session(session)
-      ]);
+      // 4️⃣ Get team details
+      console.log(`🔍 Step 4: Fetching team details`);
+      const team = await Team.findById(teamId).session(session);
       
       console.log(`ℹ️ Team found: ${team ? team.teamName : 'No'}`);
-      console.log(`ℹ️ Captain found: ${captain ? captain.name : 'No'}`);
       
       if (!team) {
         console.log("❌ Team not found");
         throw new Error("Team not found");
       }
+
+      // 5️⃣ Check if user is the team captain
+      console.log(`🔍 Step 5: Verifying user is team captain`);
+      if (team.captainId.toString() !== captainId.toString()) {
+        console.log("❌ User is not the team captain");
+        console.log(`   Team captain: ${team.captainId}`);
+        console.log(`   Current user: ${captainId}`);
+        throw new Error("Only team captain can book slots");
+      }
       
-      if (!captain) {
-        console.log("❌ Captain not found");
-        throw new Error("Captain not found");
+      // 6️⃣ Get user details for logging
+      console.log(`🔍 Step 6: Getting user details for booking log`);
+      const user = await User.findById(captainId).session(session);
+      if (!user) {
+        console.log("⚠️ User details not found, but continuing with token info");
       }
 
-      // 5️⃣ Create booking
-      console.log("🔍 Step 5: Creating booking record");
+      // 7️⃣ Create booking
+      console.log("🔍 Step 7: Creating booking record");
       const newBooking = await SlotBooking.create([{
         slotId,
         groundId: slot.groundId,
@@ -155,71 +154,45 @@ const bookSlot = async (req, res) => {
 
       console.log(`✅ Booking created: ${newBooking[0]._id}`);
 
-      // 6️⃣ Create booking log entry
-      console.log("🔍 Step 6: Creating booking log entry");
+      // 8️⃣ Create booking log entry with fallback values
+      console.log("🔍 Step 8: Creating booking log entry");
       const bookingLogEntry = {
         teamId: team._id,
         teamName: team.teamName,
-        captainId: captain._id,
-        captainName: captain.name,
-        captainEmail: captain.email,
-        captainMobile: captain.mobile,
+        captainId: captainId,
+        captainName: user?.name || req.user.name || "Captain",
+        captainEmail: user?.email || req.user.email || "",
+        captainMobile: user?.mobile || "",
         bookedAt: new Date()
       };
 
-      console.log(`📝 Booking log entry: ${JSON.stringify(bookingLogEntry)}`);
-
-      // 7️⃣ Update slot with booking log and simple bookedTeams
-      console.log(`🔍 Step 7: Updating slot ${slotId} with booking info`);
-      const updatedSlot = await Slot.findByIdAndUpdate(
+      // 9️⃣ Update slot with booking info
+      console.log(`🔍 Step 9: Updating slot with booking info`);
+      await Slot.findByIdAndUpdate(
         slotId,
         {
           $addToSet: { 
             bookedTeams: team.teamName,
             bookingsLog: bookingLogEntry
           },
-          $inc: { bookedCount: 1 }
+          $inc: { bookedCount: 1 },
+          isFull: (confirmedCount + 1) >= slot.capacity
         },
-        { new: true, session }
+        { session }
       );
 
-      console.log(`✅ Slot updated. New bookedCount: ${updatedSlot.bookedCount}`);
-
-      // 8️⃣ Calculate remaining and isFull
-      console.log("🔍 Step 8: Calculating remaining capacity and isFull");
-      const newBookedCount = updatedSlot.bookedCount || confirmedCount + 1;
-      const remaining = slot.capacity - newBookedCount;
-      const isFull = remaining <= 0;
-
-      console.log(`ℹ️ New booked count: ${newBookedCount}`);
-      console.log(`ℹ️ Remaining capacity: ${remaining}`);
-      console.log(`ℹ️ Is full: ${isFull}`);
-
-      // Update isFull if needed
-      if (isFull !== slot.isFull) {
-        console.log(`🔄 Updating isFull from ${slot.isFull} to ${isFull}`);
-        await Slot.findByIdAndUpdate(
-          slotId,
-          { isFull },
-          { session }
-        );
-        console.log("✅ isFull updated");
-      }
-
-      console.log("✅ Transaction completed successfully");
+      console.log("✅ Slot updated successfully");
     });
 
     console.log("🎉 Slot booking successful");
     res.json({ 
       success: true, 
-      message: "Slot booked successfully",
-      updatedSlot: true 
+      message: "Slot booked successfully"
     });
 
   } catch (error) {
     console.error("❌ Booking failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
-    res.status(409).json({
+    res.status(400).json({
       success: false,
       message: error.message
     });
@@ -227,12 +200,15 @@ const bookSlot = async (req, res) => {
     console.log("🔓 Ending MongoDB session");
     session.endSession();
 
+    // Send email notification in background
     if (bookedSlotId && bookedTeamId && bookedCaptainId) {
       console.log("📧 Triggering email notification in background");
       sendBookingNotificationEmail({
         slotId: bookedSlotId,
         teamId: bookedTeamId,
         captainId: bookedCaptainId
+      }).catch(emailError => {
+        console.error("📧 Email notification failed:", emailError.message);
       });
     }
   }
@@ -243,11 +219,10 @@ const bookSlot = async (req, res) => {
 -------------------------------------------------- */
 const getTeamBookings = async (req, res) => {
   console.log("📋 GET TEAM BOOKINGS API CALLED");
-  console.log(`📋 Params: ${JSON.stringify(req.params)}`);
+  console.log(`📋 Team ID: ${req.params.teamId}`);
   
   try {
     const { teamId } = req.params;
-    console.log(`🔍 Fetching bookings for team: ${teamId}`);
 
     const bookings = await SlotBooking.find({
       teamId,
@@ -258,7 +233,7 @@ const getTeamBookings = async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
 
-    console.log(`✅ Found ${bookings.length} bookings for team ${teamId}`);
+    console.log(`✅ Found ${bookings.length} bookings for team`);
     
     res.json({
       success: true,
@@ -267,7 +242,6 @@ const getTeamBookings = async (req, res) => {
 
   } catch (error) {
     console.error("❌ Get team bookings failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
     res.status(500).json({
       success: false,
       message: error.message
@@ -276,30 +250,35 @@ const getTeamBookings = async (req, res) => {
 };
 
 /* --------------------------------------------------
-   📌 CANCEL BOOKING
+   📌 CANCEL BOOKING - FIXED VERSION
 -------------------------------------------------- */
 const cancelBooking = async (req, res) => {
   console.log("🗑️ CANCEL BOOKING API CALLED");
-  console.log(`📋 Params: ${JSON.stringify(req.params)}`);
+  console.log(`👤 User from token:`, req.user);
+  console.log(`📋 Booking ID: ${req.params.bookingId}`);
   
   const session = await mongoose.startSession();
   console.log("🔐 MongoDB session started for cancellation");
 
   try {
     const { bookingId } = req.params;
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
     console.log(`🔍 Processing cancellation for booking: ${bookingId}`);
+    console.log(`👤 User ID: ${userId}, Role: ${userRole}`);
 
     await session.withTransaction(async () => {
       console.log("✅ Transaction started for cancellation");
 
       // 1️⃣ Find booking
-      console.log(`🔍 Step 1: Finding booking ${bookingId}`);
+      console.log(`🔍 Step 1: Finding booking`);
       const booking = await SlotBooking.findOne({
         _id: bookingId,
         bookingStatus: "confirmed"
       })
-      .populate("teamId")
-      .populate("captainId")
+      .populate("teamId", "teamName captainId")
+      .populate("slotId", "slotDate startTime endTime")
       .session(session);
 
       if (!booking) {
@@ -308,10 +287,30 @@ const cancelBooking = async (req, res) => {
       }
       
       console.log(`✅ Booking found: ${booking._id}`);
-      console.log(`ℹ️ Slot ID: ${booking.slotId}, Team: ${booking.teamId?.teamName}`);
+      console.log(`ℹ️ Team: ${booking.teamId?.teamName}`);
+      console.log(`ℹ️ Slot: ${booking.slotId?.slotDate} ${booking.slotId?.startTime}`);
+      console.log(`ℹ️ Captain from booking: ${booking.captainId}`);
+      console.log(`ℹ️ Current user: ${userId}`);
 
-      // 2️⃣ Update booking status
-      console.log(`🔍 Step 2: Updating booking status to 'cancelled'`);
+      // 2️⃣ Authorization check
+      console.log(`🔍 Step 2: Checking authorization`);
+      const isTeamCaptain = booking.captainId.toString() === userId.toString();
+      const isTeamOwner = booking.teamId?.captainId?.toString() === userId.toString();
+      const isAdmin = userRole === 'admin';
+      
+      console.log(`🔍 Authorization check:
+        - Is team captain: ${isTeamCaptain}
+        - Is team owner: ${isTeamOwner}
+        - Is admin: ${isAdmin}`);
+      
+      if (!isTeamCaptain && !isAdmin && !isTeamOwner) {
+        console.log("❌ User not authorized to cancel this booking");
+        throw new Error("You are not authorized to cancel this booking");
+      }
+      console.log("✅ User authorized to cancel");
+
+      // 3️⃣ Update booking status
+      console.log(`🔍 Step 3: Updating booking status to 'cancelled'`);
       await SlotBooking.findByIdAndUpdate(
         bookingId,
         { bookingStatus: "cancelled" },
@@ -319,20 +318,23 @@ const cancelBooking = async (req, res) => {
       );
       console.log("✅ Booking status updated");
 
-      // 3️⃣ Update slot - remove from bookedTeams and bookingsLog
-      console.log(`🔍 Step 3: Updating slot ${booking.slotId}`);
+      // 4️⃣ Get team name for slot update
+      const team = await Team.findById(booking.teamId._id).session(session);
+      const teamName = team?.teamName || "Team";
+
+      // 5️⃣ Update slot - remove team from bookedTeams
+      console.log(`🔍 Step 4: Updating slot`);
       await Slot.findByIdAndUpdate(
         booking.slotId,
         {
           $pull: { 
-            bookedTeams: booking.teamId.teamName,
+            bookedTeams: teamName,
             bookingsLog: { 
-              teamId: booking.teamId._id,
-              captainId: booking.captainId._id
+              teamId: booking.teamId._id
             }
           },
           $inc: { bookedCount: -1 },
-          isFull: false
+          $set: { isFull: false }
         },
         { session }
       );
@@ -349,7 +351,6 @@ const cancelBooking = async (req, res) => {
 
   } catch (error) {
     console.error("❌ Cancellation failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
     res.status(400).json({
       success: false,
       message: error.message
@@ -365,18 +366,14 @@ const cancelBooking = async (req, res) => {
 -------------------------------------------------- */
 const getSlotsByDate = async (req, res) => {
   console.log("📅 GET SLOTS BY DATE API CALLED");
-  console.log(`📋 Query: ${JSON.stringify(req.query)}`);
+  console.log(`📋 Date: ${req.query.date}`);
   
   try {
     const { date } = req.query;
-    console.log(`🔍 Fetching slots for date: ${date}`);
-
     const slotDate = new Date(date);
     slotDate.setHours(0, 0, 0, 0);
-    console.log(`📅 Formatted date: ${slotDate}`);
 
-    // 1️⃣ Get active slots
-    console.log("🔍 Step 1: Fetching active slots");
+    // Get active slots
     const slots = await Slot.find({
       slotDate,
       isDisabled: false
@@ -384,27 +381,20 @@ const getSlotsByDate = async (req, res) => {
       .sort({ startTime: 1 })
       .lean();
 
-    console.log(`✅ Found ${slots.length} active slots`);
-    
     if (!slots.length) {
-      console.log("ℹ️ No slots found for this date");
       return res.json({ success: true, data: [] });
     }
 
     const slotIds = slots.map(s => s._id);
-    console.log(`🔍 Slot IDs: ${slotIds}`);
 
-    // 2️⃣ Get confirmed bookings
-    console.log("🔍 Step 2: Fetching confirmed bookings");
+    // Get confirmed bookings
     const bookings = await SlotBooking.find({
       slotId: { $in: slotIds },
       bookingStatus: "confirmed"
-    }).populate("teamId", "teamName");
+    })
+    .populate("teamId", "teamName");
 
-    console.log(`✅ Found ${bookings.length} confirmed bookings`);
-
-    // 3️⃣ Build booking map
-    console.log("🔍 Step 3: Building booking map");
+    // Build booking map
     const bookingMap = {};
     bookings.forEach(b => {
       const id = b.slotId.toString();
@@ -412,10 +402,7 @@ const getSlotsByDate = async (req, res) => {
       bookingMap[id].push(b.teamId.teamName);
     });
 
-    console.log(`📊 Booking map created with ${Object.keys(bookingMap).length} slots`);
-
-    // 4️⃣ Attach booking info to slots
-    console.log("🔍 Step 4: Attaching booking info to slots");
+    // Attach booking info to slots
     const response = slots.map(s => {
       const bookedTeams = bookingMap[s._id.toString()] || [];
       const bookedCount = bookedTeams.length;
@@ -429,34 +416,23 @@ const getSlotsByDate = async (req, res) => {
       };
     });
 
-    console.log("✅ Response prepared successfully");
     res.json({ success: true, data: response });
     
   } catch (error) {
     console.error("❌ Get slots by date failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
 /* --------------------------------------------------
-   📌 GET SLOTS WITH BOOKINGS FOR ADMIN (WITH CAPTAIN DETAILS)
+   📌 OTHER FUNCTIONS (Simplified)
 -------------------------------------------------- */
 const getSlotsWithBookingsForAdmin = async (req, res) => {
-  console.log("👨‍💼 GET SLOTS WITH BOOKINGS FOR ADMIN API CALLED");
-  console.log(`📋 Query: ${JSON.stringify(req.query)}`);
-  console.log(`👤 Admin user: ${req.user._id}, Role: ${req.user.role}`);
-  
   try {
     const { date } = req.query;
-    console.log(`🔍 Fetching slots for admin view, date: ${date}`);
-
     const slotDate = new Date(date);
     slotDate.setHours(0, 0, 0, 0);
-    console.log(`📅 Formatted date: ${slotDate}`);
 
-    // 1️⃣ Get slots with bookingsLog populated
-    console.log("🔍 Step 1: Fetching slots with bookingsLog");
     const slots = await Slot.find({
       slotDate,
       isDisabled: false
@@ -464,19 +440,8 @@ const getSlotsWithBookingsForAdmin = async (req, res) => {
       .sort({ startTime: 1 })
       .lean();
 
-    console.log(`✅ Found ${slots.length} slots for admin view`);
-    
-    if (!slots.length) {
-      console.log("ℹ️ No slots found for this date");
-      return res.json({ success: true, data: [] });
-    }
-
-    // 2️⃣ Process each slot - directly use bookingsLog
-    console.log("🔍 Step 2: Processing slots for admin view");
     const response = slots.map(slot => {
-      // Use bookingsLog array which already has all details
       const bookings = slot.bookingsLog || [];
-      console.log(`ℹ️ Slot ${slot._id} has ${bookings.length} bookings in log`);
       
       return {
         _id: slot._id,
@@ -486,15 +451,12 @@ const getSlotsWithBookingsForAdmin = async (req, res) => {
         capacity: slot.capacity,
         bookedCount: slot.bookedCount,
         isFull: slot.isFull,
-        isDisabled: slot.isDisabled,
         bookedTeams: slot.bookedTeams || [],
         remaining: slot.capacity - slot.bookedCount,
         
-        // 🔥 ADMIN: Full booking details with captain info
+        // Admin booking details
         bookings: bookings.map(log => ({
-          teamId: log.teamId,
           teamName: log.teamName,
-          captainId: log.captainId,
           captainName: log.captainName,
           captainEmail: log.captainEmail,
           captainMobile: log.captainMobile,
@@ -503,12 +465,9 @@ const getSlotsWithBookingsForAdmin = async (req, res) => {
       };
     });
 
-    console.log("✅ Admin view response prepared");
     res.json({ success: true, data: response });
 
   } catch (error) {
-    console.error("❌ Get slots for admin failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
     res.status(500).json({
       success: false,
       message: error.message
@@ -516,44 +475,24 @@ const getSlotsWithBookingsForAdmin = async (req, res) => {
   }
 };
 
-/* --------------------------------------------------
-   📌 GET SLOT DETAILS WITH BOOKINGS (SPECIFIC SLOT)
--------------------------------------------------- */
 const getSlotDetailsWithBookings = async (req, res) => {
-  console.log("🔍 GET SLOT DETAILS WITH BOOKINGS API CALLED");
-  console.log(`📋 Params: ${JSON.stringify(req.params)}`);
-  
   try {
     const { slotId } = req.params;
-    console.log(`🔍 Fetching details for slot: ${slotId}`);
-
-    const slot = await Slot.findById(slotId)
-      .populate("bookingsLog.teamId", "teamName")
-      .populate("bookingsLog.captainId", "name email mobile")
-      .lean();
+    const slot = await Slot.findById(slotId).lean();
 
     if (!slot) {
-      console.log("❌ Slot not found");
       return res.status(404).json({
         success: false,
         message: "Slot not found"
       });
     }
 
-    console.log(`✅ Slot found: ${slot._id}, Date: ${slot.slotDate}`);
-    console.log(`ℹ️ Bookings log count: ${slot.bookingsLog?.length || 0}`);
-
-    // Format bookings log
-    console.log("🔍 Formatting bookings log");
-    const bookings = slot.bookingsLog.map(log => ({
+    const bookings = slot.bookingsLog?.map(log => ({
       teamName: log.teamName,
       captainName: log.captainName,
       captainEmail: log.captainEmail,
-      captainMobile: log.captainMobile,
       bookedAt: log.bookedAt
-    }));
-
-    console.log(`✅ Prepared ${bookings.length} booking entries`);
+    })) || [];
 
     res.json({
       success: true,
@@ -572,8 +511,6 @@ const getSlotDetailsWithBookings = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ Get slot details failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
     res.status(500).json({
       success: false,
       message: error.message
@@ -581,17 +518,9 @@ const getSlotDetailsWithBookings = async (req, res) => {
   }
 };
 
-/* --------------------------------------------------
-   📌 GET CAPTAIN BOOKINGS HISTORY
--------------------------------------------------- */
 const getCaptainBookings = async (req, res) => {
-  console.log("👤 GET CAPTAIN BOOKINGS API CALLED");
-  console.log(`👤 Captain user: ${req.user._id}, Name: ${req.user.name}`);
-  
   try {
     const captainId = req.user._id;
-    console.log(`🔍 Fetching bookings for captain: ${captainId}`);
-
     const bookings = await SlotBooking.find({
       captainId,
       bookingStatus: "confirmed"
@@ -601,8 +530,6 @@ const getCaptainBookings = async (req, res) => {
     .populate("teamId", "teamName")
     .sort({ createdAt: -1 })
     .lean();
-
-    console.log(`✅ Found ${bookings.length} bookings for captain`);
     
     res.json({
       success: true,
@@ -610,8 +537,6 @@ const getCaptainBookings = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ Get captain bookings failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
     res.status(500).json({
       success: false,
       message: error.message
@@ -619,18 +544,9 @@ const getCaptainBookings = async (req, res) => {
   }
 };
 
-/* --------------------------------------------------
-   📌 GET ALL BOOKINGS FOR ADMIN
--------------------------------------------------- */
 const getAllBookingsForAdmin = async (req, res) => {
-  console.log("👨‍💼 GET ALL BOOKINGS FOR ADMIN API CALLED");
-  console.log(`📋 Query: ${JSON.stringify(req.query)}`);
-  console.log(`👤 Admin user: ${req.user._id}, Role: ${req.user.role}`);
-  
   try {
     const { date, teamId, captainId } = req.query;
-    console.log(`🔍 Filters - Date: ${date}, Team ID: ${teamId}, Captain ID: ${captainId}`);
-    
     let filter = { bookingStatus: "confirmed" };
     
     if (date) {
@@ -638,24 +554,12 @@ const getAllBookingsForAdmin = async (req, res) => {
       startDate.setHours(0, 0, 0, 0);
       const endDate = new Date(date);
       endDate.setHours(23, 59, 59, 999);
-      
       filter.createdAt = { $gte: startDate, $lte: endDate };
-      console.log(`📅 Date filter: ${startDate} to ${endDate}`);
     }
     
-    if (teamId) {
-      filter.teamId = teamId;
-      console.log(`🏀 Team filter: ${teamId}`);
-    }
-    
-    if (captainId) {
-      filter.captainId = captainId;
-      console.log(`👤 Captain filter: ${captainId}`);
-    }
+    if (teamId) filter.teamId = teamId;
+    if (captainId) filter.captainId = captainId;
 
-    console.log(`🔍 Final filter: ${JSON.stringify(filter)}`);
-    
-    console.log("🔍 Fetching bookings with filter");
     const bookings = await SlotBooking.find(filter)
       .populate("slotId", "slotDate startTime endTime")
       .populate("groundId", "name")
@@ -663,8 +567,6 @@ const getAllBookingsForAdmin = async (req, res) => {
       .populate("captainId", "name email mobile")
       .sort({ createdAt: -1 })
       .lean();
-
-    console.log(`✅ Found ${bookings.length} bookings`);
     
     res.json({
       success: true,
@@ -672,8 +574,6 @@ const getAllBookingsForAdmin = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ Get all bookings for admin failed:", error.message);
-    console.error("❌ Error stack:", error.stack);
     res.status(500).json({
       success: false,
       message: error.message
