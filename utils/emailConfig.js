@@ -55,7 +55,7 @@ const sendWelcomeEmail = async ({ name, email, password, phoneNo }) => {
             <li>You can now create your team and add players</li>
           </ul>
 
-          <a href="${process.env.FRONTEND_URL || "http://localhost:3000"}/login"
+          <a href="${process.env.FRONTEND_URL || "http://localhost:3000" || "http://cdspremierleague.com"}/login"
              style="display:inline-block;padding:10px 20px;background:#4CAF50;color:#fff;text-decoration:none;border-radius:4px;">
             Login Now
           </a>
