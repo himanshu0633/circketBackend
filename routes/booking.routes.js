@@ -8,7 +8,9 @@ const {
   getSlotsWithBookingsForAdmin,
   getSlotDetailsWithBookings,
   getCaptainBookings,
-  getAllBookingsForAdmin
+  getAllBookingsForAdmin,
+  createBookingPaymentOrder,
+  verifyPaymentAndBookSlot
 } = require("../controllers/booking.controller");
 const { verifyToken, isTeamCaptain, isAdmin } = require("../middleware/authMiddleware");
 
@@ -27,6 +29,19 @@ router.delete("/cancel/:bookingId", verifyToken, cancelBooking);
 router.get("/admin/slots", verifyToken, isAdmin, getSlotsWithBookingsForAdmin);
 router.get("/admin/all-bookings", verifyToken, isAdmin, getAllBookingsForAdmin);
 router.get("/slot/:slotId/details", verifyToken, isAdmin, getSlotDetailsWithBookings);
+router.post(
+  "/create-payment-order",
+  verifyToken,
+  isTeamCaptain,
+  createBookingPaymentOrder
+);
+
+router.post(
+  "/verify-payment",
+  verifyToken,
+  isTeamCaptain,
+  verifyPaymentAndBookSlot
+);
 
 // 📌 Debug route (remove in production)
 router.get("/test-captain/:captainId", verifyToken, async (req, res) => {

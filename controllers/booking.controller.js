@@ -4,8 +4,14 @@ const SlotBooking = require("../models/SlotBooking");
 const User = require("../models/User");
 const Team = require("../models/Team");
 const { sendBookingEmail } = require("../utils/emailConfig");
+const Razorpay = require("razorpay");
+const crypto = require("crypto");
 
 console.log("🔧 Booking controller loaded");
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET
+});
 
 /* --------------------------------------------------
    🔔 EMAIL NOTIFICATION (NON BLOCKING)
@@ -582,6 +588,143 @@ const getAllBookingsForAdmin = async (req, res) => {
 };
 
 console.log("✅ Booking controller functions defined");
+/* --------------------------------------------------
+   💳 CREATE RAZORPAY ORDER
+-------------------------------------------------- */
+const createBookingPaymentOrder = async (req, res) => {
+  try {
+    const { slotId, teamId } = req.body;
+    const captainId = req.user._id;
+
+    console.log("💳 Creating payment order");
+    console.log("Slot:", slotId);
+    console.log("Team:", teamId);
+    console.log("Captain:", captainId);
+
+    console.log("🔑 Razorpay Key ID:", process.env.RAZORPAY_KEY_ID ? "FOUND" : "MISSING");
+    console.log("🔑 Razorpay Key Secret:", process.env.RAZORPAY_KEY_SECRET ? "FOUND" : "MISSING");
+
+    const amount = 500 * 100; // ₹500
+
+    const order = await razorpay.orders.create({
+      amount,
+      currency: "INR",
+      receipt: `SLOT_${slotId.toString().slice(-6)}_${Date.now().toString().slice(-6)}`
+
+    });
+
+    console.log("✅ Razorpay order created:", order.id);
+
+    res.json({
+      success: true,
+      order,
+      razorpayKey: process.env.RAZORPAY_KEY_ID
+    });
+
+  } catch (error) {
+    console.error("❌ Razorpay ORDER ERROR FULL:", error);
+    console.error("❌ Razorpay ORDER ERROR MESSAGE:", error.message);
+
+    res.status(500).json({
+      success: false,
+      message: error.message || "Unable to create payment order"
+    });
+  }
+};
+
+/* --------------------------------------------------
+   ✅ VERIFY PAYMENT & BOOK SLOT
+-------------------------------------------------- */
+const verifyPaymentAndBookSlot = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      slotId,
+      teamId
+    } = req.body;
+
+    const captainId = req.user._id;
+
+    // 🔐 Verify Signature
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(body)
+      .digest("hex");
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment verification failed"
+      });
+    }
+
+    // 💥 PAYMENT VERIFIED → BOOK SLOT
+    await session.withTransaction(async () => {
+      const slot = await Slot.findOne({
+        _id: slotId,
+        isDisabled: false
+      }).session(session);
+
+      if (!slot) throw new Error("Slot not available");
+
+      const confirmedCount = await SlotBooking.countDocuments({
+        slotId,
+        bookingStatus: "confirmed"
+      }).session(session);
+
+      if (confirmedCount >= slot.capacity) {
+        throw new Error("Slot already full");
+      }
+
+      const team = await Team.findById(teamId).session(session);
+      if (!team) throw new Error("Team not found");
+
+      if (team.captainId.toString() !== captainId.toString()) {
+        throw new Error("Only captain can book slot");
+      }
+
+      await SlotBooking.create([{
+        slotId,
+        groundId: slot.groundId,
+        teamId,
+        captainId,
+        bookingStatus: "confirmed",
+        paymentStatus: "paid",
+        paymentId: razorpay_payment_id
+      }], { session });
+
+      await Slot.findByIdAndUpdate(
+        slotId,
+        {
+          $inc: { bookedCount: 1 },
+          $addToSet: { bookedTeams: team.teamName },
+          isFull: (confirmedCount + 1) >= slot.capacity
+        },
+        { session }
+      );
+    });
+
+    res.json({
+      success: true,
+      message: "Payment successful & slot booked"
+    });
+
+  } catch (error) {
+    console.error("❌ Payment booking failed:", error.message);
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+};
 
 module.exports = { 
   bookSlot, 
@@ -591,5 +734,7 @@ module.exports = {
   getSlotsWithBookingsForAdmin,
   getSlotDetailsWithBookings,
   getCaptainBookings,
-  getAllBookingsForAdmin 
+  getAllBookingsForAdmin,
+  verifyPaymentAndBookSlot,
+  createBookingPaymentOrder 
 };
