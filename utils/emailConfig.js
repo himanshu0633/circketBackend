@@ -50,9 +50,9 @@ const sendWelcomeEmail = async ({ name, email, password, phoneNo }) => {
 
           <p><b>Important:</b></p>
           <ul>
-            <li>Please login and change your password</li>
-            <li>Payment status: Pending</li>
-            <li>You can now create your team and add players</li>
+           
+            <li>You can now create your team and add players then Pay and book your slot.</li>
+           
           </ul>
 
           <a href="${process.env.FRONTEND_URL || "http://localhost:3000" || "http://cdspremierleague.com"}/login"
