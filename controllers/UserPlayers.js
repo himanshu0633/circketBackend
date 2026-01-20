@@ -129,6 +129,8 @@ exports.savePlayer = async (req, res) => {
       });
     }
 
+    const paymentProofFile = req.file ? req.file.filename : null;
+
     // Prepare player data
     const playerData = {
       name: name.trim(),
@@ -140,6 +142,11 @@ exports.savePlayer = async (req, res) => {
       utrNumber: utrNumber.trim(),
       paymentStatus: "pending"
     };
+
+    if (paymentProofFile) {
+      playerData.paymentProof = paymentProofFile;
+      playerData.proofUploadedAt = new Date();
+    }
 
     // Add optional fields if provided
     if (category) playerData.category = category;

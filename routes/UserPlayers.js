@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const playerController = require("../controllers/UserPlayers");
+const upload = require("../middleware/upload");
 
 // Add middleware for admin routes (you can implement authentication later)
 const requireAdmin = (req, res, next) => {
@@ -11,7 +12,7 @@ const requireAdmin = (req, res, next) => {
 
 // Public routes
 router.get("/payment-details", playerController.getPaymentDetails);
-router.post("/register", playerController.savePlayer);
+router.post("/register", upload.single("paymentProof"), playerController.savePlayer);
 router.get("/check-status", playerController.checkStatus);
 
 // Admin routes

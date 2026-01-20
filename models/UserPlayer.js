@@ -69,6 +69,15 @@ const playerRegisterSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+
+  paymentProof: {
+  type: String,
+  default: null
+},
+proofUploadedAt: {
+  type: Date,
+  default: null
+},
   category: {
     type: String,
     enum: ["Junior", "Senior", "Veteran"],
